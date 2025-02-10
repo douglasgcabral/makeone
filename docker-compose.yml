@@ -1,0 +1,165 @@
+version: '3.1'
+
+networks:
+  network-zabbix:
+    driver: bridge
+
+services:
+  postgres-zabbix:
+    container_name: postgres-zabbix
+    image: postgres:13
+    networks:
+      - network-zabbix
+    environment:
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix_pass
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  zabbix-server:
+    container_name: zabbix-server
+    image: zabbix/zabbix-server-pgsql:alpine-7.2-latest
+    networks:
+      - network-zabbix
+    depends_on:
+      - postgres-zabbix
+    restart: always
+    ports:
+      - '10051:10051'
+    volumes:
+      - './zabbix/alertscripts:/usr/lib/zabbix/alertscripts'
+    environment:
+      DB_SERVER_HOST: postgres-zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix_pass
+
+  zabbix-frontend:
+    container_name: zabbix-frontend
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.2-latest
+    networks:
+      - network-zabbix
+    depends_on:
+      - postgres-zabbix
+      - zabbix-server
+    links:
+      - zabbix-agent
+    restart: always
+    ports:
+      - '8082:8080'
+    environment:
+      DB_SERVER_HOST: postgres-zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix_pass
+      ZBX_SERVER_NAME: Servidor Zabbix
+      PHP_TZ: America/Sao_Paulo
+
+  zabbix-agent:
+    container_name: zabbix-agent
+    image: zabbix/zabbix-agent2:latest
+    user: root
+    networks:
+      - network-zabbix
+    restart: always
+    privileged: true
+    volumes:
+      - /var/run:/var/run
+    ports:
+      - '10050:10050'
+    environment:
+      ZBX_HOSTNAME: Zabbix server
+      ZBX_SERVER_HOST: zabbix-server
+
+  zabbix-proxy:
+    container_name: zabbix-proxy
+    image: zabbix/zabbix-proxy-sqlite3:latest
+    networks:
+      - network-zabbix
+    depends_on:
+      - zabbix-server
+    restart: always
+    ports:
+      - '10052:10052'
+    environment:
+      ZBX_HOSTNAME: Zabbix Proxy
+      ZBX_SERVER_HOST: zabbix-server
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:latest
+    networks:
+      - network-zabbix
+    depends_on:
+      - zabbix-server
+      - prometheus  
+    restart: always
+    ports:
+      - '3000:3000'
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    environment:
+      GF_INSTALL_PLUGINS: alexanderzobnin-zabbix-app
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_DISABLE_SANITIZE_HTML: true
+
+  prometheus:
+    container_name: prometheus
+    image: prom/prometheus:latest
+    networks:
+      - network-zabbix
+    restart: always
+    ports:
+      - '9090:9090'  
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - ./prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml   
+      - prometheus-data:/prometheus  
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'  
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'  
+
+  node-exporter:
+    container_name: node-exporter
+    image: prom/node-exporter:latest
+    networks:
+      - network-zabbix
+    restart: always
+    ports:
+      - '9100:9100'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+
+  cadvisor:
+    container_name: cadvisor
+    image: gcr.io/cadvisor/cadvisor:latest
+    networks:
+      - network-zabbix
+    restart: always
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+  
+
+  debug:
+    container_name: debug-x
+    image: busybox
+    command: tail -f /dev/null
+    networks:
+      - network-zabbix
+
+volumes:
+  pgdata: {}
+  zbx_server_data: {}
+  grafana-storage: {}
+  prometheus-data: {}  
